@@ -342,7 +342,10 @@
 
 <main>
   <div class="meta">
-    <div class="field"><label for="tm">Team Member</label><input type="text" id="tm" data-k="tm"></div>
+    <div class="field"><label for="tm">Team Member</label>
+      <select id="tmSel" hidden></select>
+      <input type="text" id="tm" data-k="tm">
+    </div>
     <div class="field"><label for="obs">Observer</label><input type="text" id="obs" data-k="obs"></div>
     <div class="field"><label for="date">Date</label><input type="date" id="date" data-k="date"></div>
     <div class="field"><label for="shift">Shift</label>
@@ -779,6 +782,7 @@ submitBtn.addEventListener("click", async () => {
       headers:{Prefer:"return=minimal"},
       body: JSON.stringify({
         team_member: f.tm || null,
+        subject_id: f.tm_id || null,
         observer: auth.profile?.display_name || f.obs || null,
         observer_id: auth.uid,
         obs_date: f.date || null,
@@ -896,6 +900,45 @@ function gateErr(msg){
   el.classList.toggle("on", !!msg);
 }
 
+/* Roster picker — profiles IS the roster. Picking a listed person stamps
+   subject_id, which is what makes the "budtender read own" policy real.
+   Free text stays as the fallback: budtenders have no accounts yet, so a
+   name not in profiles is typed in and the row ships with subject_id null.
+   If the roster read comes back short (RLS: knights may only see their own
+   row until the "knight reads roster" policy lands), the picker never
+   appears and the form behaves exactly as before. */
+let roster = [];
+async function loadRoster(){
+  const tmSel = document.getElementById("tmSel");
+  const tmTxt = document.getElementById("tm");
+  try{
+    roster = await api(`/rest/v1/profiles?select=id,display_name&active=is.true&order=display_name`) || [];
+  }catch(e){ roster = []; }
+  if(roster.length < 2) return;
+  tmSel.innerHTML = `<option value="">— pick —</option>` +
+    roster.map(p=>`<option value="${esc(p.id)}">${esc(p.display_name)}</option>`).join("") +
+    `<option value="__other">Other (type a name)</option>`;
+  const match = roster.find(p => p.display_name === (form.fields.tm||"").trim());
+  if(match){ tmSel.value = match.id; form.fields.tm_id = match.id; }
+  else if((form.fields.tm||"").trim()){ tmSel.value = "__other"; }
+  tmSel.addEventListener("change", () => {
+    if(tmSel.value === "__other"){
+      form.fields.tm = tmTxt.value.trim();
+      form.fields.tm_id = null;
+      tmTxt.hidden = false;
+      tmTxt.focus();
+    } else {
+      const p = roster.find(r => r.id === tmSel.value);
+      form.fields.tm = p ? p.display_name : "";
+      form.fields.tm_id = p ? p.id : null;
+      tmTxt.hidden = true;
+    }
+    saveDraft();
+  });
+  tmSel.hidden = false;
+  tmTxt.hidden = tmSel.value !== "__other";
+}
+
 function identify(){
   document.getElementById("whoName").textContent = auth.profile.display_name;
   document.getElementById("whoRank").textContent = auth.profile.role;
@@ -973,6 +1016,7 @@ async function start(){
   }
   identify();
   buildBlocks(); bind(); renderArchive();
+  loadRoster().catch(()=>{});   /* picker is a bonus — never blocks the form */
   hideGate();
 }
 
